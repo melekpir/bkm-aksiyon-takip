@@ -1635,7 +1635,52 @@ $categories = $wpdb->get_results("SELECT * FROM $categories_table ORDER BY name 
                                                             </div>
                                                             
                                                             <div class="bkm-task-actions">
-                                                                <?php if ($task->sorumlu_id == $current_user->ID && !$task->tamamlandi): ?>
+                                                                <?php 
+                                                                // Check if task acceptance status exists and get it
+                                                                $task_acceptance_status = isset($task->task_acceptance_status) ? $task->task_acceptance_status : 'pending';
+                                                                ?>
+                                                                
+                                                                <?php if ($task->sorumlu_id == $current_user->ID && $task_acceptance_status === 'pending' && !$task->tamamlandi): ?>
+                                                                    <div class="bkm-task-acceptance-actions" style="margin-bottom: 10px;">
+                                                                        <button class="bkm-btn bkm-btn-primary bkm-btn-small" onclick="acceptTask(<?php echo $task->id; ?>)">
+                                                                            ✓ Kabul Et
+                                                                        </button>
+                                                                        <button class="bkm-btn bkm-btn-warning bkm-btn-small" onclick="showRejectForm(<?php echo $task->id; ?>)">
+                                                                            ✗ Reddet
+                                                                        </button>
+                                                                        
+                                                                        <!-- Reject Form (hidden by default) -->
+                                                                        <div id="reject-form-<?php echo $task->id; ?>" class="bkm-reject-form" style="display: none; margin-top: 10px;">
+                                                                            <div style="background: #fff3cd; padding: 10px; border-radius: 4px;">
+                                                                                <label for="rejection_reason_<?php echo $task->id; ?>">Reddetme Sebebi:</label>
+                                                                                <textarea id="rejection_reason_<?php echo $task->id; ?>" rows="3" placeholder="Lütfen bu görevi neden reddettiğinizi açıklayın..." required style="width: 100%; margin: 5px 0;"></textarea>
+                                                                                <div>
+                                                                                    <button class="bkm-btn bkm-btn-danger bkm-btn-small" onclick="rejectTask(<?php echo $task->id; ?>)">
+                                                                                        Görevi Reddet
+                                                                                    </button>
+                                                                                    <button class="bkm-btn bkm-btn-secondary bkm-btn-small" onclick="hideRejectForm(<?php echo $task->id; ?>)">
+                                                                                        İptal
+                                                                                    </button>
+                                                                                </div>
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                <?php elseif ($task->sorumlu_id == $current_user->ID && $task_acceptance_status === 'accepted'): ?>
+                                                                    <div class="bkm-task-status-info" style="margin-bottom: 10px;">
+                                                                        <span class="bkm-badge" style="background: #28a745; color: white;">✓ Görev Kabul Edildi</span>
+                                                                    </div>
+                                                                <?php elseif ($task->sorumlu_id == $current_user->ID && $task_acceptance_status === 'rejected'): ?>
+                                                                    <div class="bkm-task-status-info" style="margin-bottom: 10px;">
+                                                                        <span class="bkm-badge" style="background: #dc3545; color: white;">✗ Görev Reddedildi</span>
+                                                                        <?php if (isset($task->rejection_reason) && !empty($task->rejection_reason)): ?>
+                                                                            <div style="background: #f8d7da; padding: 8px; border-radius: 4px; margin-top: 5px; font-size: 0.9em;">
+                                                                                <strong>Reddetme Sebebi:</strong> <?php echo esc_html($task->rejection_reason); ?>
+                                                                            </div>
+                                                                        <?php endif; ?>
+                                                                    </div>
+                                                                <?php endif; ?>
+                                                                
+                                                                <?php if ($task->sorumlu_id == $current_user->ID && !$task->tamamlandi && $task_acceptance_status === 'accepted'): ?>
                                                                     <form method="post" style="display: inline;">
                                                                         <?php wp_nonce_field('bkm_frontend_action', 'bkm_frontend_nonce'); ?>
                                                                         <input type="hidden" name="task_action" value="complete_task" />

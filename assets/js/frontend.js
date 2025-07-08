@@ -3878,3 +3878,98 @@ function clearAllFilters() {
     jQuery('.bkm-filter-select').trigger('change');
 }
 window.clearAllFilters = clearAllFilters;
+
+// ===== TASK ACCEPT/REJECT FUNCTIONALITY =====
+
+/**
+ * Accept a task
+ */
+function acceptTask(taskId) {
+    if (!confirm('Bu görevi kabul etmek istediğinizden emin misiniz?')) {
+        return;
+    }
+    
+    jQuery.ajax({
+        url: bkmFrontend.ajax_url,
+        type: 'POST',
+        data: {
+            action: 'bkm_accept_task',
+            task_id: taskId,
+            nonce: bkmFrontend.nonce
+        },
+        success: function(response) {
+            if (response.success) {
+                showNotification('Görev başarıyla kabul edildi!', 'success');
+                // Reload the page to show updated status
+                location.reload();
+            } else {
+                showNotification('Hata: ' + response.data, 'error');
+            }
+        },
+        error: function() {
+            showNotification('Bağlantı hatası oluştu.', 'error');
+        }
+    });
+}
+window.acceptTask = acceptTask;
+
+/**
+ * Show reject form for task
+ */
+function showRejectForm(taskId) {
+    var rejectForm = jQuery('#reject-form-' + taskId);
+    rejectForm.slideDown();
+    jQuery('#rejection_reason_' + taskId).focus();
+}
+window.showRejectForm = showRejectForm;
+
+/**
+ * Hide reject form for task
+ */
+function hideRejectForm(taskId) {
+    var rejectForm = jQuery('#reject-form-' + taskId);
+    rejectForm.slideUp();
+    jQuery('#rejection_reason_' + taskId).val('');
+}
+window.hideRejectForm = hideRejectForm;
+
+/**
+ * Reject a task
+ */
+function rejectTask(taskId) {
+    var rejectionReason = jQuery('#rejection_reason_' + taskId).val().trim();
+    
+    if (!rejectionReason) {
+        showNotification('Lütfen reddetme sebebini belirtiniz.', 'error');
+        jQuery('#rejection_reason_' + taskId).focus();
+        return;
+    }
+    
+    if (!confirm('Bu görevi reddetmek istediğinizden emin misiniz?')) {
+        return;
+    }
+    
+    jQuery.ajax({
+        url: bkmFrontend.ajax_url,
+        type: 'POST',
+        data: {
+            action: 'bkm_reject_task',
+            task_id: taskId,
+            rejection_reason: rejectionReason,
+            nonce: bkmFrontend.nonce
+        },
+        success: function(response) {
+            if (response.success) {
+                showNotification('Görev başarıyla reddedildi!', 'success');
+                // Reload the page to show updated status
+                location.reload();
+            } else {
+                showNotification('Hata: ' + response.data, 'error');
+            }
+        },
+        error: function() {
+            showNotification('Bağlantı hatası oluştu.', 'error');
+        }
+    });
+}
+window.rejectTask = rejectTask;

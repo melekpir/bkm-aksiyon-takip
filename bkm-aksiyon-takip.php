@@ -112,6 +112,12 @@ class BKM_Aksiyon_Takip {
         add_action('wp_ajax_bkm_get_task_notes', array($this, 'ajax_get_task_notes'));
         add_action('wp_ajax_nopriv_bkm_get_task_notes', array($this, 'ajax_get_task_notes'));
         
+        // Task accept/reject handlers
+        add_action('wp_ajax_bkm_accept_task', array($this, 'ajax_accept_task'));
+        add_action('wp_ajax_nopriv_bkm_accept_task', array($this, 'ajax_accept_task'));
+        add_action('wp_ajax_bkm_reject_task', array($this, 'ajax_reject_task'));
+        add_action('wp_ajax_nopriv_bkm_reject_task', array($this, 'ajax_reject_task'));
+        
         // Category AJAX handlers
         add_action('wp_ajax_bkm_add_category', array($this, 'ajax_add_category'));
         add_action('wp_ajax_bkm_edit_category', array($this, 'ajax_edit_category'));
@@ -605,6 +611,37 @@ private function create_database_tables() {
                 }
                 error_log("✅ Updated " . count($empty_user_names) . " empty user_name records in $notes_table table with first_name + last_name");
             }
+        }
+        
+        // Add task accept/reject functionality columns
+        $tasks_table = $wpdb->prefix . 'bkm_tasks';
+        
+        // Check and add task_acceptance_status column
+        $acceptance_status_exists = $wpdb->get_results("SHOW COLUMNS FROM $tasks_table LIKE 'task_acceptance_status'");
+        if (empty($acceptance_status_exists)) {
+            $wpdb->query("ALTER TABLE $tasks_table ADD COLUMN task_acceptance_status varchar(20) DEFAULT 'pending' AFTER status");
+            error_log("✅ Added task_acceptance_status column to $tasks_table table");
+        }
+        
+        // Check and add rejection_reason column
+        $rejection_reason_exists = $wpdb->get_results("SHOW COLUMNS FROM $tasks_table LIKE 'rejection_reason'");
+        if (empty($rejection_reason_exists)) {
+            $wpdb->query("ALTER TABLE $tasks_table ADD COLUMN rejection_reason text NULL AFTER task_acceptance_status");
+            error_log("✅ Added rejection_reason column to $tasks_table table");
+        }
+        
+        // Check and add accepted_at timestamp column
+        $accepted_at_exists = $wpdb->get_results("SHOW COLUMNS FROM $tasks_table LIKE 'accepted_at'");
+        if (empty($accepted_at_exists)) {
+            $wpdb->query("ALTER TABLE $tasks_table ADD COLUMN accepted_at datetime NULL AFTER rejection_reason");
+            error_log("✅ Added accepted_at column to $tasks_table table");
+        }
+        
+        // Check and add rejected_at timestamp column
+        $rejected_at_exists = $wpdb->get_results("SHOW COLUMNS FROM $tasks_table LIKE 'rejected_at'");
+        if (empty($rejected_at_exists)) {
+            $wpdb->query("ALTER TABLE $tasks_table ADD COLUMN rejected_at datetime NULL AFTER accepted_at");
+            error_log("✅ Added rejected_at column to $tasks_table table");
         }
     }
 
@@ -2821,6 +2858,215 @@ public function ajax_fix_action_statuses() {
         'total_count' => $total_count,
         'errors' => $errors
     ));
+}
+
+/**
+ * AJAX handler for accepting a task
+ */
+public function ajax_accept_task() {
+    // Verify nonce
+    if (!wp_verify_nonce($_POST['nonce'] ?? '', 'bkm_frontend_nonce')) {
+        wp_send_json_error('Güvenlik kontrolü başarısız.');
+    }
+    
+    global $wpdb;
+    $current_user = wp_get_current_user();
+    
+    $task_id = intval($_POST['task_id'] ?? 0);
+    
+    if ($task_id <= 0) {
+        wp_send_json_error('Geçersiz görev ID.');
+    }
+    
+    // Get task details
+    $tasks_table = $wpdb->prefix . 'bkm_tasks';
+    $task = $wpdb->get_row($wpdb->prepare(
+        "SELECT * FROM $tasks_table WHERE id = %d",
+        $task_id
+    ));
+    
+    if (!$task) {
+        wp_send_json_error('Görev bulunamadı.');
+    }
+    
+    // Check if user is the assigned responsible person
+    if ($task->sorumlu_id != $current_user->ID) {
+        wp_send_json_error('Bu görevi sadece atanan kişi kabul edebilir.');
+    }
+    
+    // Check if task is already accepted or rejected
+    if ($task->task_acceptance_status !== 'pending') {
+        wp_send_json_error('Bu görev zaten ' . ($task->task_acceptance_status === 'accepted' ? 'kabul edilmiş' : 'reddedilmiş') . '.');
+    }
+    
+    // Update task status to accepted
+    $result = $wpdb->update(
+        $tasks_table,
+        array(
+            'task_acceptance_status' => 'accepted',
+            'accepted_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql')
+        ),
+        array('id' => $task_id),
+        array('%s', '%s', '%s'),
+        array('%d')
+    );
+    
+    if ($result === false) {
+        wp_send_json_error('Görev kabul edilirken bir hata oluştu.');
+    }
+    
+    // Send email notification to task creator
+    $this->send_task_acceptance_notification($task, $current_user, 'accepted');
+    
+    wp_send_json_success('Görev başarıyla kabul edildi.');
+}
+
+/**
+ * AJAX handler for rejecting a task
+ */
+public function ajax_reject_task() {
+    // Verify nonce
+    if (!wp_verify_nonce($_POST['nonce'] ?? '', 'bkm_frontend_nonce')) {
+        wp_send_json_error('Güvenlik kontrolü başarısız.');
+    }
+    
+    global $wpdb;
+    $current_user = wp_get_current_user();
+    
+    $task_id = intval($_POST['task_id'] ?? 0);
+    $rejection_reason = sanitize_textarea_field($_POST['rejection_reason'] ?? '');
+    
+    if ($task_id <= 0) {
+        wp_send_json_error('Geçersiz görev ID.');
+    }
+    
+    if (empty($rejection_reason)) {
+        wp_send_json_error('Reddetme sebebi belirtilmelidir.');
+    }
+    
+    // Get task details
+    $tasks_table = $wpdb->prefix . 'bkm_tasks';
+    $task = $wpdb->get_row($wpdb->prepare(
+        "SELECT * FROM $tasks_table WHERE id = %d",
+        $task_id
+    ));
+    
+    if (!$task) {
+        wp_send_json_error('Görev bulunamadı.');
+    }
+    
+    // Check if user is the assigned responsible person
+    if ($task->sorumlu_id != $current_user->ID) {
+        wp_send_json_error('Bu görevi sadece atanan kişi reddedebilir.');
+    }
+    
+    // Check if task is already accepted or rejected
+    if ($task->task_acceptance_status !== 'pending') {
+        wp_send_json_error('Bu görev zaten ' . ($task->task_acceptance_status === 'accepted' ? 'kabul edilmiş' : 'reddedilmiş') . '.');
+    }
+    
+    // Update task status to rejected
+    $result = $wpdb->update(
+        $tasks_table,
+        array(
+            'task_acceptance_status' => 'rejected',
+            'rejection_reason' => $rejection_reason,
+            'rejected_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql')
+        ),
+        array('id' => $task_id),
+        array('%s', '%s', '%s', '%s'),
+        array('%d')
+    );
+    
+    if ($result === false) {
+        wp_send_json_error('Görev reddedilirken bir hata oluştu.');
+    }
+    
+    // Send email notification to task creator
+    $this->send_task_acceptance_notification($task, $current_user, 'rejected', $rejection_reason);
+    
+    wp_send_json_success('Görev başarıyla reddedildi.');
+}
+
+/**
+ * Send email notification for task acceptance/rejection
+ */
+private function send_task_acceptance_notification($task, $user, $action, $rejection_reason = '') {
+    global $wpdb;
+    
+    // Get task creator details
+    $creator = get_user_by('ID', $task->created_by);
+    if (!$creator) {
+        error_log('Task creator not found for task ID: ' . $task->id);
+        return;
+    }
+    
+    // Get action details
+    $actions_table = $wpdb->prefix . 'bkm_actions';
+    $action_data = $wpdb->get_row($wpdb->prepare(
+        "SELECT * FROM $actions_table WHERE id = %d",
+        $task->action_id
+    ));
+    
+    $action_title = $action_data ? $action_data->tespit_konusu : 'Bilinmeyen Aksiyon';
+    
+    // Prepare email content
+    if ($action === 'accepted') {
+        $subject = 'Görev Kabul Edildi - BKM Aksiyon Takip';
+        $content = sprintf(
+            '<h3>Görev Kabul Edildi</h3>
+            <p><strong>%s</strong> adlı kullanıcı size atanan aşağıdaki görevi kabul etti:</p>
+            <div style="background: #f8f9fa; padding: 16px; border-radius: 4px; margin: 16px 0;">
+                <h4>Görev Detayları:</h4>
+                <p><strong>Aksiyon:</strong> %s</p>
+                <p><strong>Görev:</strong> %s</p>
+                <p><strong>Sorumlu:</strong> %s</p>
+                <p><strong>Kabul Tarihi:</strong> %s</p>
+            </div>
+            <p>Görev artık aktif durumdadır ve ilerleme takip edilebilir.</p>',
+            esc_html($user->display_name),
+            esc_html($action_title),
+            esc_html($task->content),
+            esc_html($user->display_name),
+            esc_html(current_time('d.m.Y H:i'))
+        );
+    } else {
+        $subject = 'Görev Reddedildi - BKM Aksiyon Takip';
+        $content = sprintf(
+            '<h3>Görev Reddedildi</h3>
+            <p><strong>%s</strong> adlı kullanıcı size atanan aşağıdaki görevi reddetti:</p>
+            <div style="background: #f8f9fa; padding: 16px; border-radius: 4px; margin: 16px 0;">
+                <h4>Görev Detayları:</h4>
+                <p><strong>Aksiyon:</strong> %s</p>
+                <p><strong>Görev:</strong> %s</p>
+                <p><strong>Sorumlu:</strong> %s</p>
+                <p><strong>Reddetme Tarihi:</strong> %s</p>
+                <div style="background: #fff3cd; padding: 12px; border-radius: 4px; margin-top: 12px;">
+                    <h5 style="margin: 0 0 8px 0; color: #856404;">Reddetme Sebebi:</h5>
+                    <p style="margin: 0; color: #856404;"><em>%s</em></p>
+                </div>
+            </div>
+            <p>Lütfen görev detaylarını gözden geçirin ve gerekli düzenlemeleri yapın.</p>',
+            esc_html($user->display_name),
+            esc_html($action_title),
+            esc_html($task->content),
+            esc_html($user->display_name),
+            esc_html(current_time('d.m.Y H:i')),
+            esc_html($rejection_reason)
+        );
+    }
+    
+    // Send email
+    $to = $creator->user_email;
+    $result = bkm_send_html_email($to, $subject, $content);
+    
+    if ($result) {
+        error_log("✅ Task {$action} notification sent to {$to} for task ID: {$task->id}");
+    } else {
+        error_log("❌ Failed to send task {$action} notification to {$to} for task ID: {$task->id}");
+    }
 }
 
 }
