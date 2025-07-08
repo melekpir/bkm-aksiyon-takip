@@ -1854,7 +1854,6 @@ public function ajax_add_action() {
     
     // Map form fields to correct values
     $category_id = intval($_POST['kategori_id'] ?? $_POST['category_id'] ?? 0);
-    $performance_id = intval($_POST['performans_id'] ?? $_POST['performance_id'] ?? 1);
     $onem_derecesi = intval($_POST['onem_derecesi'] ?? $_POST['priority'] ?? 1);
     $tespit_konusu = sanitize_textarea_field($_POST['tespit_konusu'] ?? $_POST['title'] ?? '');
     $aciklama = sanitize_textarea_field($_POST['aciklama'] ?? $_POST['description'] ?? '');
@@ -1902,7 +1901,7 @@ public function ajax_add_action() {
             'status' => 'open',
             'tanımlayan_id' => get_current_user_id(),
             'onem_derecesi' => $onem_derecesi,
-            'performans_id' => $performance_id,
+            'performans_id' => 1, // Default value to maintain database compatibility
             'ilerleme_durumu' => 0,
             'hafta' => date('W'),
             'created_at' => current_time('mysql'),

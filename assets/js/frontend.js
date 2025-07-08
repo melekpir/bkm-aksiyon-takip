@@ -3181,42 +3181,10 @@ window.toggleReplyForm = function(taskId, noteId) {
             success: function(response) {
                 console.log('🎯 Performans listesi yanıtı:', response);
                 if (response.success) {
-                    // Update action form dropdown
-                    var actionSelect = $('#action_performans_id');
-                    if (actionSelect.length > 0) {
-                        var selectedValue = actionSelect.val();
-                        actionSelect.empty();
-                        actionSelect.append('<option value="">Seçiniz...</option>');
-                        
-                        $.each(response.data.performances, function(index, performance) {
-                            actionSelect.append('<option value="' + performance.id + '">' + escapeHtml(performance.name) + '</option>');
-                        });
-                        
-                        if (selectedValue) {
-                            actionSelect.val(selectedValue);
-                        }
-                    }
-                    
-                    // Update other performance dropdowns (if any)
-                    var performanceSelects = $('select[name="performans_id"]:not(#action_performans_id)');
-                    performanceSelects.each(function() {
-                        var selectedValue = $(this).val();
-                        $(this).empty();
-                        $(this).append('<option value="">Performans Seçin</option>');
-                        
-                        $.each(response.data.performances, function(index, performance) {
-                            $(this).append('<option value="' + performance.id + '">' + escapeHtml(performance.name) + '</option>');
-                        }.bind(this));
-                        
-                        if (selectedValue) {
-                            $(this).val(selectedValue);
-                        }
-                    });
-                    
                     // Update performance list display
                     refreshPerformanceList(response.data.performances);
                     
-                    console.log('✅ Performans dropdown ve liste güncellendi');
+                    console.log('✅ Performans listesi güncellendi');
                 }
             },
             error: function() {

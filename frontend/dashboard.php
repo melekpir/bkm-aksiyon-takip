@@ -48,24 +48,20 @@ if ($is_admin || $is_editor) {
     // Admins and editors see all actions
     $actions_query = "SELECT a.*, 
                             COALESCE(u.display_name, 'Bilinmiyor') as tanımlayan_name,
-                            c.name as kategori_name,
-                            p.name as performans_name
+                            c.name as kategori_name
                      FROM $actions_table a
                      LEFT JOIN {$wpdb->users} u ON a.tanımlayan_id = u.ID AND a.tanımlayan_id > 0
                      LEFT JOIN $categories_table c ON a.kategori_id = c.id
-                     LEFT JOIN $performance_table p ON a.performans_id = p.id
                      ORDER BY a.created_at DESC";
 } else {
     // Non-admins and non-editors see only their assigned actions
     $actions_query = $wpdb->prepare(
         "SELECT a.*, 
                 COALESCE(u.display_name, 'Bilinmiyor') as tanımlayan_name,
-                c.name as kategori_name,
-                p.name as performans_name
+                c.name as kategori_name
          FROM $actions_table a
          LEFT JOIN {$wpdb->users} u ON a.tanımlayan_id = u.ID AND a.tanımlayan_id > 0
          LEFT JOIN $categories_table c ON a.kategori_id = c.id
-         LEFT JOIN $performance_table p ON a.performans_id = p.id
          WHERE a.sorumlu_ids LIKE %s
          ORDER BY a.created_at DESC",
         '%' . $wpdb->esc_like($current_user_id) . '%'
@@ -242,9 +238,8 @@ if (count($users) == 0) {
     $users = get_users(); // Fallback to all users
 }
 
-// Get categories and performance data for action form
+// Get categories for action form
 $categories = $wpdb->get_results("SELECT * FROM $categories_table ORDER BY name ASC");
-$performances = $wpdb->get_results("SELECT * FROM $performance_table ORDER BY name ASC");
 ?>
 
 <!-- BKM Plugin CSS Override - WordPress Tema Çakışmalarını Çöz -->
@@ -1290,18 +1285,8 @@ $performances = $wpdb->get_results("SELECT * FROM $performance_table ORDER BY na
                             </div>
                         </div>
                         
-                        <!-- İkinci satır: Performans, Önem Derecesi, Hedef Tarih -->
-                        <div class="bkm-form-grid-3">
-                            <div class="bkm-field">
-                                <label for="action_performans_id">Performans <span class="required">*</span>:</label>
-                                <select name="performans_id" id="action_performans_id" required>
-                                    <option value="">Seçiniz...</option>
-                                    <?php foreach ($performances as $performance): ?>
-                                        <option value="<?php echo $performance->id; ?>"><?php echo esc_html($performance->name); ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                            
+                        <!-- İkinci satır: Önem Derecesi, Hedef Tarih -->
+                        <div class="bkm-form-grid-2">
                             <div class="bkm-field">
                                 <label for="action_onem_derecesi">Önem Derecesi <span class="required">*</span>:</label>
                                 <select name="onem_derecesi" id="action_onem_derecesi" required>
@@ -1515,10 +1500,7 @@ $performances = $wpdb->get_results("SELECT * FROM $performance_table ORDER BY na
                                                         <strong>Kategori:</strong> 
                                                         <span class="bkm-badge bkm-badge-category"><?php echo esc_html($action->kategori_name); ?></span>
                                                     </div>
-                                                    <div class="bkm-detail-item">
-                                                        <strong>Performans:</strong> 
-                                                        <span class="bkm-badge bkm-badge-performance"><?php echo esc_html($action->performans_name); ?></span>
-                                                    </div>
+
                                                     <div class="bkm-detail-item">
                                                         <strong>Önem Derecesi:</strong> 
                                                         <span class="bkm-priority priority-<?php echo $action->onem_derecesi; ?>">
