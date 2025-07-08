@@ -3973,3 +3973,160 @@ function rejectTask(taskId) {
     });
 }
 window.rejectTask = rejectTask;
+
+// ===== TASK EDITING FUNCTIONALITY =====
+
+/**
+ * Toggle task edit form
+ */
+function toggleTaskEditForm(taskId) {
+    var editForm = jQuery('#task-edit-form-' + taskId);
+    if (editForm.is(':visible')) {
+        editForm.slideUp();
+    } else {
+        editForm.slideDown();
+        jQuery('#edit_content_' + taskId).focus();
+    }
+}
+window.toggleTaskEditForm = toggleTaskEditForm;
+
+/**
+ * Save task edit
+ */
+function saveTaskEdit(taskId) {
+    var content = jQuery('#edit_content_' + taskId).val().trim();
+    var targetDate = jQuery('#edit_target_date_' + taskId).val();
+    var editReason = jQuery('#edit_reason_' + taskId).val().trim();
+    
+    if (!content) {
+        showNotification('Görev içeriği boş olamaz.', 'error');
+        jQuery('#edit_content_' + taskId).focus();
+        return;
+    }
+    
+    if (!targetDate) {
+        showNotification('Hedef tarih belirtilmelidir.', 'error');
+        jQuery('#edit_target_date_' + taskId).focus();
+        return;
+    }
+    
+    if (!editReason) {
+        showNotification('Düzenleme sebebi belirtilmelidir.', 'error');
+        jQuery('#edit_reason_' + taskId).focus();
+        return;
+    }
+    
+    jQuery.ajax({
+        url: bkmFrontend.ajax_url,
+        type: 'POST',
+        data: {
+            action: 'bkm_edit_task',
+            task_id: taskId,
+            content: content,
+            target_date: targetDate,
+            edit_reason: editReason,
+            nonce: bkmFrontend.nonce
+        },
+        success: function(response) {
+            if (response.success) {
+                showNotification('Görev başarıyla güncellendi!', 'success');
+                // Reload the page to show updated task
+                location.reload();
+            } else {
+                showNotification('Hata: ' + response.data, 'error');
+            }
+        },
+        error: function() {
+            showNotification('Bağlantı hatası oluştu.', 'error');
+        }
+    });
+}
+window.saveTaskEdit = saveTaskEdit;
+
+/**
+ * Toggle task history display
+ */
+function toggleTaskHistory(taskId) {
+    var historySection = jQuery('#task-history-' + taskId);
+    
+    if (historySection.is(':visible')) {
+        historySection.slideUp();
+    } else {
+        historySection.slideDown();
+        loadTaskHistory(taskId);
+    }
+}
+window.toggleTaskHistory = toggleTaskHistory;
+
+/**
+ * Load task change history
+ */
+function loadTaskHistory(taskId) {
+    var historyContent = jQuery('#task-history-content-' + taskId);
+    historyContent.html('<p style="text-align: center; color: #666;">Geçmiş yükleniyor...</p>');
+    
+    jQuery.ajax({
+        url: bkmFrontend.ajax_url,
+        type: 'POST',
+        data: {
+            action: 'bkm_get_task_history',
+            task_id: taskId,
+            nonce: bkmFrontend.nonce
+        },
+        success: function(response) {
+            if (response.success) {
+                var history = response.data;
+                if (history.length === 0) {
+                    historyContent.html('<p style="text-align: center; color: #666; font-style: italic;">Bu görev için henüz değişiklik geçmişi bulunmamaktadır.</p>');
+                } else {
+                    var html = '<div class="bkm-history-list">';
+                    
+                    jQuery.each(history, function(index, change) {
+                        var date = new Date(change.created_at);
+                        var formattedDate = date.toLocaleDateString('tr-TR') + ' ' + date.toLocaleTimeString('tr-TR', {hour: '2-digit', minute: '2-digit'});
+                        
+                        html += '<div class="bkm-history-item" style="background: #f8f9fa; padding: 12px; margin-bottom: 8px; border-radius: 4px; border-left: 4px solid #007cba;">';
+                        html += '<div style="display: flex; justify-content: between; align-items: center; margin-bottom: 8px;">';
+                        html += '<strong style="color: #007cba;">' + escapeHtml(change.user_name) + '</strong>';
+                        html += '<span style="color: #666; font-size: 0.9em; margin-left: auto;">' + formattedDate + '</span>';
+                        html += '</div>';
+                        html += '<div style="margin-bottom: 6px;"><strong>Değiştirilen Alanlar:</strong> ' + escapeHtml(change.changed_fields) + '</div>';
+                        html += '<div style="background: #fff; padding: 8px; border-radius: 4px; font-style: italic; color: #666;">';
+                        html += '<strong>Sebep:</strong> ' + escapeHtml(change.change_reason);
+                        html += '</div>';
+                        
+                        // Show old and new values if available
+                        if (change.old_values && change.new_values) {
+                            try {
+                                var oldValues = JSON.parse(change.old_values);
+                                var newValues = JSON.parse(change.new_values);
+                                
+                                html += '<div style="margin-top: 8px; font-size: 0.9em;">';
+                                jQuery.each(oldValues, function(field, oldValue) {
+                                    var newValue = newValues[field] || '';
+                                    html += '<div style="margin: 4px 0;">';
+                                    html += '<span style="color: #dc3545;">Eski:</span> ' + escapeHtml(oldValue) + ' ';
+                                    html += '→ <span style="color: #28a745;">Yeni:</span> ' + escapeHtml(newValue);
+                                    html += '</div>';
+                                });
+                                html += '</div>';
+                            } catch (e) {
+                                // JSON parsing failed, ignore
+                            }
+                        }
+                        
+                        html += '</div>';
+                    });
+                    
+                    html += '</div>';
+                    historyContent.html(html);
+                }
+            } else {
+                historyContent.html('<p style="text-align: center; color: #dc3545;">Geçmiş yüklenirken hata oluştu: ' + response.data + '</p>');
+            }
+        },
+        error: function() {
+            historyContent.html('<p style="text-align: center; color: #dc3545;">Bağlantı hatası oluştu.</p>');
+        }
+    });
+}

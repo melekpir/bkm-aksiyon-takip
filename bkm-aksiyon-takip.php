@@ -118,6 +118,12 @@ class BKM_Aksiyon_Takip {
         add_action('wp_ajax_bkm_reject_task', array($this, 'ajax_reject_task'));
         add_action('wp_ajax_nopriv_bkm_reject_task', array($this, 'ajax_reject_task'));
         
+        // Task editing handlers
+        add_action('wp_ajax_bkm_edit_task', array($this, 'ajax_edit_task'));
+        add_action('wp_ajax_nopriv_bkm_edit_task', array($this, 'ajax_edit_task'));
+        add_action('wp_ajax_bkm_get_task_history', array($this, 'ajax_get_task_history'));
+        add_action('wp_ajax_nopriv_bkm_get_task_history', array($this, 'ajax_get_task_history'));
+        
         // Category AJAX handlers
         add_action('wp_ajax_bkm_add_category', array($this, 'ajax_add_category'));
         add_action('wp_ajax_bkm_edit_category', array($this, 'ajax_edit_category'));
@@ -502,6 +508,24 @@ private function create_database_tables() {
         KEY created_by (created_by)
     ) $charset_collate;";
     
+    // Task Change History table
+    $task_history_table = $wpdb->prefix . 'bkm_task_change_history';
+    $task_history_sql = "CREATE TABLE $task_history_table (
+        id mediumint(9) NOT NULL AUTO_INCREMENT,
+        task_id mediumint(9) NOT NULL,
+        user_id bigint(20) UNSIGNED NOT NULL,
+        user_name varchar(255) NOT NULL,
+        change_reason text NOT NULL,
+        old_values text,
+        new_values text,
+        changed_fields text,
+        created_at datetime DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY task_id (task_id),
+        KEY user_id (user_id),
+        KEY created_at (created_at)
+    ) $charset_collate;";
+    
     require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
     dbDelta($actions_sql);
     dbDelta($categories_sql);
@@ -510,6 +534,7 @@ private function create_database_tables() {
     dbDelta($notes_sql);
     dbDelta($user_activities_sql);
     dbDelta($note_replies_sql);
+    dbDelta($task_history_sql);
     
     // Update database version
     update_option('bkm_aksiyon_takip_db_version', BKM_AKSIYON_TAKIP_VERSION);
@@ -3066,6 +3091,179 @@ private function send_task_acceptance_notification($task, $user, $action, $rejec
         error_log("✅ Task {$action} notification sent to {$to} for task ID: {$task->id}");
     } else {
         error_log("❌ Failed to send task {$action} notification to {$to} for task ID: {$task->id}");
+    }
+}
+
+/**
+ * AJAX handler for editing a task
+ */
+public function ajax_edit_task() {
+    // Verify nonce
+    if (!wp_verify_nonce($_POST['nonce'] ?? '', 'bkm_frontend_nonce')) {
+        wp_send_json_error('Güvenlik kontrolü başarısız.');
+    }
+    
+    global $wpdb;
+    $current_user = wp_get_current_user();
+    
+    $task_id = intval($_POST['task_id'] ?? 0);
+    $new_content = sanitize_textarea_field($_POST['content'] ?? '');
+    $new_target_date = sanitize_text_field($_POST['target_date'] ?? '');
+    $edit_reason = sanitize_textarea_field($_POST['edit_reason'] ?? '');
+    
+    if ($task_id <= 0) {
+        wp_send_json_error('Geçersiz görev ID.');
+    }
+    
+    if (empty($new_content)) {
+        wp_send_json_error('Görev içeriği boş olamaz.');
+    }
+    
+    if (empty($new_target_date)) {
+        wp_send_json_error('Hedef tarih belirtilmelidir.');
+    }
+    
+    if (empty($edit_reason)) {
+        wp_send_json_error('Düzenleme sebebi belirtilmelidir.');
+    }
+    
+    // Get current task details
+    $tasks_table = $wpdb->prefix . 'bkm_tasks';
+    $task = $wpdb->get_row($wpdb->prepare(
+        "SELECT * FROM $tasks_table WHERE id = %d",
+        $task_id
+    ));
+    
+    if (!$task) {
+        wp_send_json_error('Görev bulunamadı.');
+    }
+    
+    // Check if user has permission to edit this task
+    $is_admin = current_user_can('administrator');
+    $is_editor = current_user_can('editor');
+    $is_task_owner = ($task->sorumlu_id == $current_user->ID);
+    $is_task_creator = ($task->created_by == $current_user->ID);
+    
+    if (!$is_admin && !$is_editor && !$is_task_owner && !$is_task_creator) {
+        wp_send_json_error('Bu görevi düzenleme yetkiniz bulunmamaktadır.');
+    }
+    
+    // Check if there are any changes
+    $old_values = array();
+    $new_values = array();
+    $changed_fields = array();
+    
+    if ($task->content !== $new_content) {
+        $old_values['content'] = $task->content;
+        $new_values['content'] = $new_content;
+        $changed_fields[] = 'İçerik';
+    }
+    
+    if ($task->hedef_bitis_tarihi !== $new_target_date) {
+        $old_values['hedef_bitis_tarihi'] = $task->hedef_bitis_tarihi;
+        $new_values['hedef_bitis_tarihi'] = $new_target_date;
+        $changed_fields[] = 'Hedef Tarihi';
+    }
+    
+    if (empty($changed_fields)) {
+        wp_send_json_error('Herhangi bir değişiklik yapılmadı.');
+    }
+    
+    // Update task
+    $result = $wpdb->update(
+        $tasks_table,
+        array(
+            'content' => $new_content,
+            'hedef_bitis_tarihi' => $new_target_date,
+            'target_date' => $new_target_date, // Also update the new field
+            'updated_at' => current_time('mysql')
+        ),
+        array('id' => $task_id),
+        array('%s', '%s', '%s', '%s'),
+        array('%d')
+    );
+    
+    if ($result === false) {
+        wp_send_json_error('Görev güncellenirken bir hata oluştu.');
+    }
+    
+    // Record change history
+    $this->record_task_change_history(
+        $task_id,
+        $current_user,
+        $edit_reason,
+        $old_values,
+        $new_values,
+        $changed_fields
+    );
+    
+    wp_send_json_success('Görev başarıyla güncellendi.');
+}
+
+/**
+ * AJAX handler for getting task change history
+ */
+public function ajax_get_task_history() {
+    // Verify nonce
+    if (!wp_verify_nonce($_POST['nonce'] ?? '', 'bkm_frontend_nonce')) {
+        wp_send_json_error('Güvenlik kontrolü başarısız.');
+    }
+    
+    global $wpdb;
+    
+    $task_id = intval($_POST['task_id'] ?? 0);
+    
+    if ($task_id <= 0) {
+        wp_send_json_error('Geçersiz görev ID.');
+    }
+    
+    // Get task change history
+    $history_table = $wpdb->prefix . 'bkm_task_change_history';
+    $history = $wpdb->get_results($wpdb->prepare(
+        "SELECT * FROM $history_table 
+         WHERE task_id = %d 
+         ORDER BY created_at DESC",
+        $task_id
+    ));
+    
+    wp_send_json_success($history);
+}
+
+/**
+ * Record task change history
+ */
+private function record_task_change_history($task_id, $user, $change_reason, $old_values, $new_values, $changed_fields) {
+    global $wpdb;
+    
+    $history_table = $wpdb->prefix . 'bkm_task_change_history';
+    
+    // Get user's full name
+    $first_name = get_user_meta($user->ID, 'first_name', true);
+    $last_name = get_user_meta($user->ID, 'last_name', true);
+    $user_name = trim($first_name . ' ' . $last_name);
+    if (empty($user_name)) {
+        $user_name = $user->display_name;
+    }
+    
+    $result = $wpdb->insert(
+        $history_table,
+        array(
+            'task_id' => $task_id,
+            'user_id' => $user->ID,
+            'user_name' => $user_name,
+            'change_reason' => $change_reason,
+            'old_values' => json_encode($old_values),
+            'new_values' => json_encode($new_values),
+            'changed_fields' => implode(', ', $changed_fields),
+            'created_at' => current_time('mysql')
+        ),
+        array('%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s')
+    );
+    
+    if ($result === false) {
+        error_log('Failed to record task change history: ' . $wpdb->last_error);
+    } else {
+        error_log("✅ Task change history recorded for task ID: {$task_id}");
     }
 }
 

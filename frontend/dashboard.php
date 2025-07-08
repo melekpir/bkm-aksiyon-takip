@@ -1701,6 +1701,16 @@ $categories = $wpdb->get_results("SELECT * FROM $categories_table ORDER BY name 
                                                                             Notları Göster (<?php echo count($task_notes); ?>)
                                                                         </button>
                                                                     <?php endif; ?>
+                                                                    
+                                                                    <!-- Task Edit Button -->
+                                                                    <button class="bkm-btn bkm-btn-info bkm-btn-small" onclick="toggleTaskEditForm(<?php echo $task->id; ?>)">
+                                                                        ✏️ Düzenle
+                                                                    </button>
+                                                                    
+                                                                    <!-- Task History Button -->
+                                                                    <button class="bkm-btn bkm-btn-secondary bkm-btn-small" onclick="toggleTaskHistory(<?php echo $task->id; ?>)">
+                                                                        📋 Geçmiş
+                                                                    </button>
                                                                 <?php endif; ?>
                                                             </div>
                                                         </div>
@@ -1742,6 +1752,44 @@ $categories = $wpdb->get_results("SELECT * FROM $categories_table ORDER BY name 
                                                                     <?php else: ?>
                                                                         <p style="text-align: center; color: #9e9e9e; font-style: italic; margin: 20px 0; padding: 30px; border: 2px dashed #e0e0e0; border-radius: 12px;">📝 Bu görev için henüz not bulunmamaktadır.</p>
                                                                     <?php endif; ?>
+                                                                </div>
+                                                            </div>
+                                                            
+                                                            <!-- Task Edit Form (hidden by default) -->
+                                                            <div id="task-edit-form-<?php echo $task->id; ?>" class="bkm-task-edit-form" style="display: none;">
+                                                                <h4>Görev Düzenle</h4>
+                                                                <form id="task-edit-form-element-<?php echo $task->id; ?>">
+                                                                    <div class="bkm-form-group">
+                                                                        <label for="edit_content_<?php echo $task->id; ?>">Görev İçeriği:</label>
+                                                                        <textarea id="edit_content_<?php echo $task->id; ?>" rows="3" required style="width: 100%;"><?php echo esc_textarea($task->content); ?></textarea>
+                                                                    </div>
+                                                                    
+                                                                    <div class="bkm-form-group">
+                                                                        <label for="edit_target_date_<?php echo $task->id; ?>">Hedef Tarih:</label>
+                                                                        <input type="date" id="edit_target_date_<?php echo $task->id; ?>" value="<?php echo esc_attr($task->hedef_bitis_tarihi); ?>" required style="width: 100%;" />
+                                                                    </div>
+                                                                    
+                                                                    <div class="bkm-form-group">
+                                                                        <label for="edit_reason_<?php echo $task->id; ?>">Düzenleme Sebebi <span class="required">*</span>:</label>
+                                                                        <textarea id="edit_reason_<?php echo $task->id; ?>" rows="2" placeholder="Bu düzenlemenin sebebini açıklayın..." required style="width: 100%;"></textarea>
+                                                                    </div>
+                                                                    
+                                                                    <div class="bkm-form-actions">
+                                                                        <button type="button" class="bkm-btn bkm-btn-primary bkm-btn-small" onclick="saveTaskEdit(<?php echo $task->id; ?>)">
+                                                                            Kaydet
+                                                                        </button>
+                                                                        <button type="button" class="bkm-btn bkm-btn-secondary bkm-btn-small" onclick="toggleTaskEditForm(<?php echo $task->id; ?>)">
+                                                                            İptal
+                                                                        </button>
+                                                                    </div>
+                                                                </form>
+                                                            </div>
+                                                            
+                                                            <!-- Task History Section (hidden by default) -->
+                                                            <div id="task-history-<?php echo $task->id; ?>" class="bkm-task-history" style="display: none;">
+                                                                <h4>Değişiklik Geçmişi</h4>
+                                                                <div id="task-history-content-<?php echo $task->id; ?>" class="bkm-history-content">
+                                                                    <p style="text-align: center; color: #666;">Geçmiş yükleniyor...</p>
                                                                 </div>
                                                             </div>
                                                         <?php endif; ?>
