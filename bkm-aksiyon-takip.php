@@ -83,6 +83,9 @@ class BKM_Aksiyon_Takip {
         // Add shortcode
         add_shortcode('aksiyon_takipx', array($this, 'shortcode_handler'));
         
+        // Add cron hook for task reminders
+        add_action('bkm_task_reminder_check', array($this, 'send_task_reminder_emails'));
+        
         // Add AJAX handlers
         add_action('wp_ajax_bkm_refresh_stats', array($this, 'ajax_refresh_stats'));
         add_action('wp_ajax_bkm_delete_item', array($this, 'ajax_delete_item'));
@@ -331,6 +334,11 @@ class BKM_Aksiyon_Takip {
         // Flush rewrite rules
         flush_rewrite_rules();
         
+        // Schedule task reminder cron job
+        if (!wp_next_scheduled('bkm_task_reminder_check')) {
+            wp_schedule_event(time(), 'daily', 'bkm_task_reminder_check');
+        }
+        
         // Set activation flag
         update_option('bkm_aksiyon_takip_activated', true);
     }
@@ -361,6 +369,9 @@ class BKM_Aksiyon_Takip {
      * Plugin deactivation
      */
     public function deactivate() {
+        // Clear scheduled task reminder cron job
+        wp_clear_scheduled_hook('bkm_task_reminder_check');
+        
         // Flush rewrite rules
         flush_rewrite_rules();
     }
@@ -2017,7 +2028,25 @@ public function ajax_add_action() {
     
     $this->send_email_notification('action_created', $notification_data);
     
-    wp_send_json_success('Aksiyon başarıyla eklendi.');
+    // Prepare action data for frontend display
+    $action_data = array(
+        'action_id' => $action_id,
+        'tespit_konusu' => $tespit_konusu,
+        'aciklama' => $aciklama,
+        'kategori_name' => $kategori ? $kategori->name : 'Bilinmiyor',
+        'tanımlayan_name' => $current_user->display_name,
+        'onem_derecesi' => $onem_derecesi,
+        'hedef_tarih' => $hedef_tarih,
+        'ilerleme_durumu' => 0,
+        'status' => 'open',
+        'created_at' => current_time('mysql')
+    );
+    
+    wp_send_json_success(array(
+        'message' => 'Aksiyon başarıyla eklendi.',
+        'action_id' => $action_id,
+        'action_data' => $action_data
+    ));
 }
 
 // Task Management Functions
@@ -2139,15 +2168,28 @@ public function ajax_add_task() {
     $this->send_email_notification('task_created', $notification_data);
     
     // Update action progress after adding new task
+    
+    // Get complete task data for frontend display
+    $task_data = $wpdb->get_row($wpdb->prepare(
+        "SELECT t.*, 
+                CASE 
+                    WHEN TRIM(CONCAT(um1.meta_value, ' ', um2.meta_value)) != ''
+                    THEN TRIM(CONCAT(um1.meta_value, ' ', um2.meta_value))
+                    ELSE u.display_name
+                END as sorumlu_name 
+         FROM $table_name t 
+         LEFT JOIN {$wpdb->users} u ON t.sorumlu_id = u.ID 
+         LEFT JOIN {$wpdb->usermeta} um1 ON u.ID = um1.user_id AND um1.meta_key = 'first_name'
+         LEFT JOIN {$wpdb->usermeta} um2 ON u.ID = um2.user_id AND um2.meta_key = 'last_name'
+         WHERE t.id = %d",
+        $insert_id
+    ));
+    
     $response_data = array(
         'message' => 'Görev başarıyla eklendi!',
         'task_id' => $insert_id,
         'action_id' => $action_id,
-        'data' => array(
-            'action_id' => $action_id,
-            'content' => $content,
-            'sorumlu_id' => $sorumlu_id
-        )
+        'task_data' => $task_data
     );
     
     // Update action progress based on all tasks of this action
@@ -3265,6 +3307,152 @@ private function record_task_change_history($task_id, $user, $change_reason, $ol
     } else {
         error_log("✅ Task change history recorded for task ID: {$task_id}");
     }
+}
+
+/**
+ * Send task reminder emails for tasks approaching deadline
+ */
+public function send_task_reminder_emails() {
+    global $wpdb;
+    
+    $tasks_table = $wpdb->prefix . 'bkm_tasks';
+    $actions_table = $wpdb->prefix . 'bkm_actions';
+    
+    // Get current date
+    $current_date = current_time('Y-m-d');
+    $reminder_start_date = date('Y-m-d', strtotime($current_date . ' +7 days'));
+    
+    // Find tasks that:
+    // 1. Are not completed (tamamlandi = 0)
+    // 2. Are accepted (task_acceptance_status = 'accepted')
+    // 3. Have target date in the next 7 days or have passed the target date
+    // 4. Target date is today or in the past (overdue) or exactly 7,6,5,4,3,2,1 days from now
+    $tasks_query = $wpdb->prepare("
+        SELECT t.*, 
+               u.user_email, 
+               u.display_name,
+               CONCAT(COALESCE(um1.meta_value, ''), ' ', COALESCE(um2.meta_value, '')) as full_name,
+               a.tespit_konusu as action_title,
+               DATEDIFF(t.hedef_bitis_tarihi, %s) as days_until_deadline
+        FROM $tasks_table t
+        LEFT JOIN {$wpdb->users} u ON t.sorumlu_id = u.ID
+        LEFT JOIN {$wpdb->usermeta} um1 ON u.ID = um1.user_id AND um1.meta_key = 'first_name'
+        LEFT JOIN {$wpdb->usermeta} um2 ON u.ID = um2.user_id AND um2.meta_key = 'last_name'
+        LEFT JOIN $actions_table a ON t.action_id = a.id
+        WHERE t.tamamlandi = 0 
+          AND (t.task_acceptance_status = 'accepted' OR t.task_acceptance_status IS NULL OR t.task_acceptance_status = '')
+          AND t.hedef_bitis_tarihi <= %s
+          AND u.user_email IS NOT NULL
+          AND u.user_email != ''
+        ORDER BY t.hedef_bitis_tarihi ASC
+    ", $current_date, $reminder_start_date);
+    
+    $tasks_needing_reminders = $wpdb->get_results($tasks_query);
+    
+    if (empty($tasks_needing_reminders)) {
+        error_log('✅ BKM Task Reminders: No tasks found needing reminders today.');
+        return;
+    }
+    
+    $sent_count = 0;
+    $error_count = 0;
+    
+    foreach ($tasks_needing_reminders as $task) {
+        $days_until_deadline = intval($task->days_until_deadline);
+        
+        // Determine email urgency and subject based on days until deadline
+        if ($days_until_deadline < 0) {
+            // Overdue
+            $urgency = 'GECIKMIŞ';
+            $urgency_color = '#dc3545';
+            $subject = 'ACIL: Gecikmiş Görev Hatırlatması - BKM Aksiyon Takip';
+            $deadline_text = abs($days_until_deadline) . ' gün gecikmiş';
+        } elseif ($days_until_deadline == 0) {
+            // Due today
+            $urgency = 'BUGÜN';
+            $urgency_color = '#fd7e14';
+            $subject = 'ÖNEMLİ: Görev Son Günü - BKM Aksiyon Takip';
+            $deadline_text = 'bugün sona eriyor';
+        } else {
+            // Due in the future (1-7 days)
+            $urgency = $days_until_deadline . ' GÜN KALDI';
+            $urgency_color = '#ffc107';
+            $subject = 'Görev Hatırlatması (' . $days_until_deadline . ' gün kaldı) - BKM Aksiyon Takip';
+            $deadline_text = $days_until_deadline . ' gün kaldı';
+        }
+        
+        // Prepare user's display name
+        $user_name = trim($task->full_name);
+        if (empty($user_name)) {
+            $user_name = $task->display_name;
+        }
+        
+        // Format dates
+        $target_date_formatted = date('d.m.Y', strtotime($task->hedef_bitis_tarihi));
+        $today_formatted = date('d.m.Y');
+        
+        // Create email content
+        $content = sprintf('
+            <div style="background: %s; color: white; padding: 16px; text-align: center; margin-bottom: 20px; border-radius: 4px;">
+                <h3 style="margin: 0; font-size: 18px;">🚨 %s</h3>
+            </div>
+            
+            <p>Merhaba <strong>%s</strong>,</p>
+            
+            <p>Size atanan aşağıdaki görevin tamamlanma tarihi <strong>%s</strong>:</p>
+            
+            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid %s;">
+                <h4 style="margin: 0 0 12px 0; color: #333;">📋 Görev Detayları</h4>
+                <p style="margin: 6px 0;"><strong>Aksiyon:</strong> %s</p>
+                <p style="margin: 6px 0;"><strong>Görev:</strong> %s</p>
+                <p style="margin: 6px 0;"><strong>Hedef Tarih:</strong> %s</p>
+                <p style="margin: 6px 0;"><strong>Bugünün Tarihi:</strong> %s</p>
+                <p style="margin: 6px 0; color: %s; font-weight: bold;">⏰ Durum: %s</p>
+            </div>
+            
+            %s
+            
+            <div style="background: #e3f2fd; padding: 16px; border-radius: 4px; margin: 20px 0;">
+                <p style="margin: 0; font-size: 14px; color: #1565c0;">
+                    💡 <strong>Hatırlatma:</strong> Bu e-posta günlük olarak gönderilecek ve görev tamamlandığında otomatik olarak duracaktır.
+                </p>
+            </div>
+            
+            <p>Lütfen sisteme giriş yaparak görevinizi kontrol edin ve gerekli işlemleri tamamlayın.</p>
+            
+            <p>Teşekkürler,<br>BKM Aksiyon Takip Sistemi</p>
+        ',
+            $urgency_color,
+            $urgency,
+            esc_html($user_name),
+            esc_html($deadline_text),
+            $urgency_color,
+            esc_html($task->action_title ?: 'Bilinmeyen Aksiyon'),
+            esc_html($task->content),
+            esc_html($target_date_formatted),
+            esc_html($today_formatted),
+            $urgency_color,
+            esc_html($deadline_text),
+            $days_until_deadline < 0 
+                ? '<div style="background: #ffebee; padding: 16px; border-radius: 4px; margin: 20px 0; border-left: 4px solid #f44336;"><p style="margin: 0; color: #d32f2f;"><strong>⚠️ DİKKAT:</strong> Bu görev hedeflenen tarihten ' . abs($days_until_deadline) . ' gün geç kalmıştır. Lütfen en kısa sürede tamamlayın.</p></div>'
+                : ($days_until_deadline == 0 
+                    ? '<div style="background: #fff3e0; padding: 16px; border-radius: 4px; margin: 20px 0; border-left: 4px solid #ff9800;"><p style="margin: 0; color: #f57c00;"><strong>⏰ SON GÜN:</strong> Bu görevin son günü bugündür. Lütfen bugün içerisinde tamamlayın.</p></div>'
+                    : '<div style="background: #f3e5f5; padding: 16px; border-radius: 4px; margin: 20px 0; border-left: 4px solid #9c27b0;"><p style="margin: 0; color: #7b1fa2;"><strong>📅 HATIRLATMA:</strong> Görevin tamamlanması için ' . $days_until_deadline . ' gününüz kaldı.</p></div>')
+        );
+        
+        // Send email
+        $result = bkm_send_html_email($task->user_email, $subject, $content);
+        
+        if ($result) {
+            $sent_count++;
+            error_log("✅ Task reminder sent to {$task->user_email} for task ID: {$task->id} (deadline: {$task->hedef_bitis_tarihi}, days left: {$days_until_deadline})");
+        } else {
+            $error_count++;
+            error_log("❌ Failed to send task reminder to {$task->user_email} for task ID: {$task->id}");
+        }
+    }
+    
+    error_log("🎯 BKM Task Reminders Summary: {$sent_count} reminders sent, {$error_count} failed, " . count($tasks_needing_reminders) . " total tasks checked.");
 }
 
 }
