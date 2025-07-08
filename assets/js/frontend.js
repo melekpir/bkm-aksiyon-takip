@@ -1084,10 +1084,16 @@ jQuery(document).ready(function($) {
                     if (typeof toggleActionForm === 'function') {
                         toggleActionForm();
                     }
-                    // Page refresh to show new action
-                    setTimeout(function() {
-                        window.location.reload();
-                    }, 1500);
+                    
+                    // Add new action to the table without page refresh
+                    if (response.data && response.data.action_id) {
+                        addNewActionToTable(response.data);
+                    } else {
+                        // Fallback to page refresh if action data not available
+                        setTimeout(function() {
+                            window.location.reload();
+                        }, 1500);
+                    }
                 } else {
                     var errorMessage = 'Aksiyon eklenirken hata oluştu.';
                     if (response && response.data) {
@@ -1239,10 +1245,16 @@ jQuery(document).ready(function($) {
                     if (typeof toggleTaskForm === 'function') {
                         toggleTaskForm();
                     }
-                    // Page refresh to show new task
-                    setTimeout(function() {
-                        window.location.reload();
-                    }, 1500);
+                    
+                    // Add new task to the UI without page refresh
+                    if (response.data && response.data.task_data) {
+                        addNewTaskToAction(response.data.task_data);
+                    } else {
+                        // Fallback to page refresh if task data not available
+                        setTimeout(function() {
+                            window.location.reload();
+                        }, 1500);
+                    }
                 } else {
                     var errorMessage = 'Görev eklenirken hata oluştu.';
                     if (response && response.data) {
@@ -3181,42 +3193,10 @@ window.toggleReplyForm = function(taskId, noteId) {
             success: function(response) {
                 console.log('🎯 Performans listesi yanıtı:', response);
                 if (response.success) {
-                    // Update action form dropdown
-                    var actionSelect = $('#action_performans_id');
-                    if (actionSelect.length > 0) {
-                        var selectedValue = actionSelect.val();
-                        actionSelect.empty();
-                        actionSelect.append('<option value="">Seçiniz...</option>');
-                        
-                        $.each(response.data.performances, function(index, performance) {
-                            actionSelect.append('<option value="' + performance.id + '">' + escapeHtml(performance.name) + '</option>');
-                        });
-                        
-                        if (selectedValue) {
-                            actionSelect.val(selectedValue);
-                        }
-                    }
-                    
-                    // Update other performance dropdowns (if any)
-                    var performanceSelects = $('select[name="performans_id"]:not(#action_performans_id)');
-                    performanceSelects.each(function() {
-                        var selectedValue = $(this).val();
-                        $(this).empty();
-                        $(this).append('<option value="">Performans Seçin</option>');
-                        
-                        $.each(response.data.performances, function(index, performance) {
-                            $(this).append('<option value="' + performance.id + '">' + escapeHtml(performance.name) + '</option>');
-                        }.bind(this));
-                        
-                        if (selectedValue) {
-                            $(this).val(selectedValue);
-                        }
-                    });
-                    
                     // Update performance list display
                     refreshPerformanceList(response.data.performances);
                     
-                    console.log('✅ Performans dropdown ve liste güncellendi');
+                    console.log('✅ Performans listesi güncellendi');
                 }
             },
             error: function() {
@@ -3910,3 +3890,381 @@ function clearAllFilters() {
     jQuery('.bkm-filter-select').trigger('change');
 }
 window.clearAllFilters = clearAllFilters;
+
+// ===== TASK ACCEPT/REJECT FUNCTIONALITY =====
+
+/**
+ * Accept a task
+ */
+function acceptTask(taskId) {
+    if (!confirm('Bu görevi kabul etmek istediğinizden emin misiniz?')) {
+        return;
+    }
+    
+    jQuery.ajax({
+        url: bkmFrontend.ajax_url,
+        type: 'POST',
+        data: {
+            action: 'bkm_accept_task',
+            task_id: taskId,
+            nonce: bkmFrontend.nonce
+        },
+        success: function(response) {
+            if (response.success) {
+                showNotification('Görev başarıyla kabul edildi!', 'success');
+                // Reload the page to show updated status
+                location.reload();
+            } else {
+                showNotification('Hata: ' + response.data, 'error');
+            }
+        },
+        error: function() {
+            showNotification('Bağlantı hatası oluştu.', 'error');
+        }
+    });
+}
+window.acceptTask = acceptTask;
+
+/**
+ * Show reject form for task
+ */
+function showRejectForm(taskId) {
+    var rejectForm = jQuery('#reject-form-' + taskId);
+    rejectForm.slideDown();
+    jQuery('#rejection_reason_' + taskId).focus();
+}
+window.showRejectForm = showRejectForm;
+
+/**
+ * Hide reject form for task
+ */
+function hideRejectForm(taskId) {
+    var rejectForm = jQuery('#reject-form-' + taskId);
+    rejectForm.slideUp();
+    jQuery('#rejection_reason_' + taskId).val('');
+}
+window.hideRejectForm = hideRejectForm;
+
+/**
+ * Reject a task
+ */
+function rejectTask(taskId) {
+    var rejectionReason = jQuery('#rejection_reason_' + taskId).val().trim();
+    
+    if (!rejectionReason) {
+        showNotification('Lütfen reddetme sebebini belirtiniz.', 'error');
+        jQuery('#rejection_reason_' + taskId).focus();
+        return;
+    }
+    
+    if (!confirm('Bu görevi reddetmek istediğinizden emin misiniz?')) {
+        return;
+    }
+    
+    jQuery.ajax({
+        url: bkmFrontend.ajax_url,
+        type: 'POST',
+        data: {
+            action: 'bkm_reject_task',
+            task_id: taskId,
+            rejection_reason: rejectionReason,
+            nonce: bkmFrontend.nonce
+        },
+        success: function(response) {
+            if (response.success) {
+                showNotification('Görev başarıyla reddedildi!', 'success');
+                // Reload the page to show updated status
+                location.reload();
+            } else {
+                showNotification('Hata: ' + response.data, 'error');
+            }
+        },
+        error: function() {
+            showNotification('Bağlantı hatası oluştu.', 'error');
+        }
+    });
+}
+window.rejectTask = rejectTask;
+
+// ===== TASK EDITING FUNCTIONALITY =====
+
+/**
+ * Toggle task edit form
+ */
+function toggleTaskEditForm(taskId) {
+    var editForm = jQuery('#task-edit-form-' + taskId);
+    if (editForm.is(':visible')) {
+        editForm.slideUp();
+    } else {
+        editForm.slideDown();
+        jQuery('#edit_content_' + taskId).focus();
+    }
+}
+window.toggleTaskEditForm = toggleTaskEditForm;
+
+/**
+ * Save task edit
+ */
+function saveTaskEdit(taskId) {
+    var content = jQuery('#edit_content_' + taskId).val().trim();
+    var targetDate = jQuery('#edit_target_date_' + taskId).val();
+    var editReason = jQuery('#edit_reason_' + taskId).val().trim();
+    
+    if (!content) {
+        showNotification('Görev içeriği boş olamaz.', 'error');
+        jQuery('#edit_content_' + taskId).focus();
+        return;
+    }
+    
+    if (!targetDate) {
+        showNotification('Hedef tarih belirtilmelidir.', 'error');
+        jQuery('#edit_target_date_' + taskId).focus();
+        return;
+    }
+    
+    if (!editReason) {
+        showNotification('Düzenleme sebebi belirtilmelidir.', 'error');
+        jQuery('#edit_reason_' + taskId).focus();
+        return;
+    }
+    
+    jQuery.ajax({
+        url: bkmFrontend.ajax_url,
+        type: 'POST',
+        data: {
+            action: 'bkm_edit_task',
+            task_id: taskId,
+            content: content,
+            target_date: targetDate,
+            edit_reason: editReason,
+            nonce: bkmFrontend.nonce
+        },
+        success: function(response) {
+            if (response.success) {
+                showNotification('Görev başarıyla güncellendi!', 'success');
+                // Reload the page to show updated task
+                location.reload();
+            } else {
+                showNotification('Hata: ' + response.data, 'error');
+            }
+        },
+        error: function() {
+            showNotification('Bağlantı hatası oluştu.', 'error');
+        }
+    });
+}
+window.saveTaskEdit = saveTaskEdit;
+
+/**
+ * Toggle task history display
+ */
+function toggleTaskHistory(taskId) {
+    var historySection = jQuery('#task-history-' + taskId);
+    
+    if (historySection.is(':visible')) {
+        historySection.slideUp();
+    } else {
+        historySection.slideDown();
+        loadTaskHistory(taskId);
+    }
+}
+window.toggleTaskHistory = toggleTaskHistory;
+
+/**
+ * Load task change history
+ */
+function loadTaskHistory(taskId) {
+    var historyContent = jQuery('#task-history-content-' + taskId);
+    historyContent.html('<p style="text-align: center; color: #666;">Geçmiş yükleniyor...</p>');
+    
+    jQuery.ajax({
+        url: bkmFrontend.ajax_url,
+        type: 'POST',
+        data: {
+            action: 'bkm_get_task_history',
+            task_id: taskId,
+            nonce: bkmFrontend.nonce
+        },
+        success: function(response) {
+            if (response.success) {
+                var history = response.data;
+                if (history.length === 0) {
+                    historyContent.html('<p style="text-align: center; color: #666; font-style: italic;">Bu görev için henüz değişiklik geçmişi bulunmamaktadır.</p>');
+                } else {
+                    var html = '<div class="bkm-history-list">';
+                    
+                    jQuery.each(history, function(index, change) {
+                        var date = new Date(change.created_at);
+                        var formattedDate = date.toLocaleDateString('tr-TR') + ' ' + date.toLocaleTimeString('tr-TR', {hour: '2-digit', minute: '2-digit'});
+                        
+                        html += '<div class="bkm-history-item" style="background: #f8f9fa; padding: 12px; margin-bottom: 8px; border-radius: 4px; border-left: 4px solid #007cba;">';
+                        html += '<div style="display: flex; justify-content: between; align-items: center; margin-bottom: 8px;">';
+                        html += '<strong style="color: #007cba;">' + escapeHtml(change.user_name) + '</strong>';
+                        html += '<span style="color: #666; font-size: 0.9em; margin-left: auto;">' + formattedDate + '</span>';
+                        html += '</div>';
+                        html += '<div style="margin-bottom: 6px;"><strong>Değiştirilen Alanlar:</strong> ' + escapeHtml(change.changed_fields) + '</div>';
+                        html += '<div style="background: #fff; padding: 8px; border-radius: 4px; font-style: italic; color: #666;">';
+                        html += '<strong>Sebep:</strong> ' + escapeHtml(change.change_reason);
+                        html += '</div>';
+                        
+                        // Show old and new values if available
+                        if (change.old_values && change.new_values) {
+                            try {
+                                var oldValues = JSON.parse(change.old_values);
+                                var newValues = JSON.parse(change.new_values);
+                                
+                                html += '<div style="margin-top: 8px; font-size: 0.9em;">';
+                                jQuery.each(oldValues, function(field, oldValue) {
+                                    var newValue = newValues[field] || '';
+                                    html += '<div style="margin: 4px 0;">';
+                                    html += '<span style="color: #dc3545;">Eski:</span> ' + escapeHtml(oldValue) + ' ';
+                                    html += '→ <span style="color: #28a745;">Yeni:</span> ' + escapeHtml(newValue);
+                                    html += '</div>';
+                                });
+                                html += '</div>';
+                            } catch (e) {
+                                // JSON parsing failed, ignore
+                            }
+                        }
+                        
+                        html += '</div>';
+                    });
+                    
+                    html += '</div>';
+                    historyContent.html(html);
+                }
+            } else {
+                historyContent.html('<p style="text-align: center; color: #dc3545;">Geçmiş yüklenirken hata oluştu: ' + response.data + '</p>');
+            }
+        },
+        error: function() {
+            historyContent.html('<p style="text-align: center; color: #dc3545;">Bağlantı hatası oluştu.</p>');
+        }
+    });
+}
+
+/**
+ * Add new action to the actions table without page refresh
+ */
+function addNewActionToTable(responseData) {
+    console.log('➕ Adding new action to table:', responseData);
+    
+    var actionData = responseData.action_data;
+    if (!actionData) {
+        console.error('❌ No action data provided');
+        return;
+    }
+    
+    var actionsTable = jQuery('.bkm-actions-table table tbody');
+    if (actionsTable.length === 0) {
+        console.error('❌ Actions table not found');
+        return;
+    }
+    
+    // Create priority label
+    var priorityLabels = {
+        '1': 'Düşük',
+        '2': 'Orta', 
+        '3': 'Yüksek',
+        '4': 'Kritik'
+    };
+    var priorityLabel = priorityLabels[actionData.onem_derecesi] || 'Bilinmiyor';
+    
+    // Format date
+    var formattedDate = new Date(actionData.hedef_tarih).toLocaleDateString('tr-TR');
+    
+    // Create new row HTML
+    var newRowHtml = '<tr data-action-id="' + actionData.action_id + '" class="new-action-highlight">' +
+        '<td>' + actionData.action_id + '</td>' +
+        '<td>' + escapeHtml(actionData.tanımlayan_name) + '</td>' +
+        '<td>' + escapeHtml(actionData.kategori_name) + '</td>' +
+        '<td class="bkm-content-cell" title="' + escapeHtml(actionData.tespit_konusu) + '">' +
+            escapeHtml(actionData.tespit_konusu.substring(0, 50)) + (actionData.tespit_konusu.length > 50 ? '...' : '') +
+        '</td>' +
+        '<td class="bkm-content-cell" title="' + escapeHtml(actionData.aciklama) + '">' +
+            escapeHtml(actionData.aciklama.substring(0, 50)) + (actionData.aciklama.length > 50 ? '...' : '') +
+        '</td>' +
+        '<td><span class="bkm-priority priority-' + actionData.onem_derecesi + '">' + priorityLabel + '</span></td>' +
+        '<td>' + formattedDate + '</td>' +
+        '<td>' +
+            '<div class="bkm-action-status">' +
+                '<span class="bkm-badge bkm-badge-open">Açık</span>' +
+                '<div class="bkm-progress">' +
+                    '<div class="bkm-progress-bar" style="width: 0%"></div>' +
+                    '<span class="bkm-progress-text">0%</span>' +
+                '</div>' +
+            '</div>' +
+            '<div class="bkm-action-controls">' +
+                '<button class="bkm-btn bkm-btn-small" onclick="toggleActionDetails(' + actionData.action_id + ')">' +
+                    '📋 Detaylar' +
+                '</button>' +
+                '<button class="bkm-btn bkm-btn-small" onclick="toggleTasks(' + actionData.action_id + ')">' +
+                    '📝 Görevler (0)' +
+                '</button>' +
+            '</div>' +
+        '</td>' +
+    '</tr>';
+    
+    // Add details row
+    newRowHtml += '<tr id="details-' + actionData.action_id + '" class="bkm-details-row" style="display: none;">' +
+        '<td colspan="8">' +
+            '<div class="bkm-action-details">' +
+                '<div class="bkm-detail-grid">' +
+                    '<div class="bkm-detail-item">' +
+                        '<strong>Kategori:</strong> ' +
+                        '<span class="bkm-badge bkm-badge-category">' + escapeHtml(actionData.kategori_name) + '</span>' +
+                    '</div>' +
+                    '<div class="bkm-detail-item">' +
+                        '<strong>Önem Derecesi:</strong> ' +
+                        '<span class="bkm-priority priority-' + actionData.onem_derecesi + '">' + priorityLabel + '</span>' +
+                    '</div>' +
+                    '<div class="bkm-detail-item">' +
+                        '<strong>Hedef Tarih:</strong> ' + formattedDate +
+                    '</div>' +
+                    '<div class="bkm-detail-item">' +
+                        '<strong>Durum:</strong> ' +
+                        '<span class="bkm-badge bkm-badge-open">Açık</span>' +
+                    '</div>' +
+                    '<div class="bkm-detail-item">' +
+                        '<strong>İlerleme:</strong>' +
+                        '<div class="bkm-progress">' +
+                            '<div class="bkm-progress-bar" style="width: 0%"></div>' +
+                            '<span class="bkm-progress-text">0%</span>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>' +
+            '</div>' +
+        '</td>' +
+    '</tr>';
+    
+    // Add tasks row
+    newRowHtml += '<tr id="tasks-' + actionData.action_id + '" class="bkm-tasks-row" style="display: none;">' +
+        '<td colspan="8">' +
+            '<div class="bkm-tasks-section">' +
+                '<h4>Görevler</h4>' +
+                '<div class="bkm-tasks-list">' +
+                    '<p>Bu aksiyon için henüz görev bulunmamaktadır.</p>' +
+                '</div>' +
+            '</div>' +
+        '</td>' +
+    '</tr>';
+    
+    // Add the new row at the beginning of the table
+    actionsTable.prepend(newRowHtml);
+    
+    // Add highlight animation
+    var newRow = actionsTable.find('tr[data-action-id="' + actionData.action_id + '"]');
+    newRow.addClass('new-action-highlight');
+    
+    // Remove highlight after animation
+    setTimeout(function() {
+        newRow.removeClass('new-action-highlight');
+    }, 3000);
+    
+    // Scroll to the new action
+    jQuery('html, body').animate({
+        scrollTop: newRow.offset().top - 100
+    }, 600, 'swing');
+    
+    console.log('✅ New action added to table successfully');
+}

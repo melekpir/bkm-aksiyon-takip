@@ -48,24 +48,20 @@ if ($is_admin || $is_editor) {
     // Admins and editors see all actions
     $actions_query = "SELECT a.*, 
                             COALESCE(u.display_name, 'Bilinmiyor') as tanımlayan_name,
-                            c.name as kategori_name,
-                            p.name as performans_name
+                            c.name as kategori_name
                      FROM $actions_table a
                      LEFT JOIN {$wpdb->users} u ON a.tanımlayan_id = u.ID AND a.tanımlayan_id > 0
                      LEFT JOIN $categories_table c ON a.kategori_id = c.id
-                     LEFT JOIN $performance_table p ON a.performans_id = p.id
                      ORDER BY a.created_at DESC";
 } else {
     // Non-admins and non-editors see only their assigned actions
     $actions_query = $wpdb->prepare(
         "SELECT a.*, 
                 COALESCE(u.display_name, 'Bilinmiyor') as tanımlayan_name,
-                c.name as kategori_name,
-                p.name as performans_name
+                c.name as kategori_name
          FROM $actions_table a
          LEFT JOIN {$wpdb->users} u ON a.tanımlayan_id = u.ID AND a.tanımlayan_id > 0
          LEFT JOIN $categories_table c ON a.kategori_id = c.id
-         LEFT JOIN $performance_table p ON a.performans_id = p.id
          WHERE a.sorumlu_ids LIKE %s
          ORDER BY a.created_at DESC",
         '%' . $wpdb->esc_like($current_user_id) . '%'
@@ -242,9 +238,8 @@ if (count($users) == 0) {
     $users = get_users(); // Fallback to all users
 }
 
-// Get categories and performance data for action form
+// Get categories for action form
 $categories = $wpdb->get_results("SELECT * FROM $categories_table ORDER BY name ASC");
-$performances = $wpdb->get_results("SELECT * FROM $performance_table ORDER BY name ASC");
 ?>
 
 <!-- BKM Plugin CSS Override - WordPress Tema Çakışmalarını Çöz -->
@@ -1290,18 +1285,8 @@ $performances = $wpdb->get_results("SELECT * FROM $performance_table ORDER BY na
                             </div>
                         </div>
                         
-                        <!-- İkinci satır: Performans, Önem Derecesi, Hedef Tarih -->
-                        <div class="bkm-form-grid-3">
-                            <div class="bkm-field">
-                                <label for="action_performans_id">Performans <span class="required">*</span>:</label>
-                                <select name="performans_id" id="action_performans_id" required>
-                                    <option value="">Seçiniz...</option>
-                                    <?php foreach ($performances as $performance): ?>
-                                        <option value="<?php echo $performance->id; ?>"><?php echo esc_html($performance->name); ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                            
+                        <!-- İkinci satır: Önem Derecesi, Hedef Tarih -->
+                        <div class="bkm-form-grid-2">
                             <div class="bkm-field">
                                 <label for="action_onem_derecesi">Önem Derecesi <span class="required">*</span>:</label>
                                 <select name="onem_derecesi" id="action_onem_derecesi" required>
@@ -1515,10 +1500,7 @@ $performances = $wpdb->get_results("SELECT * FROM $performance_table ORDER BY na
                                                         <strong>Kategori:</strong> 
                                                         <span class="bkm-badge bkm-badge-category"><?php echo esc_html($action->kategori_name); ?></span>
                                                     </div>
-                                                    <div class="bkm-detail-item">
-                                                        <strong>Performans:</strong> 
-                                                        <span class="bkm-badge bkm-badge-performance"><?php echo esc_html($action->performans_name); ?></span>
-                                                    </div>
+
                                                     <div class="bkm-detail-item">
                                                         <strong>Önem Derecesi:</strong> 
                                                         <span class="bkm-priority priority-<?php echo $action->onem_derecesi; ?>">
@@ -1653,7 +1635,52 @@ $performances = $wpdb->get_results("SELECT * FROM $performance_table ORDER BY na
                                                             </div>
                                                             
                                                             <div class="bkm-task-actions">
-                                                                <?php if ($task->sorumlu_id == $current_user->ID && !$task->tamamlandi): ?>
+                                                                <?php 
+                                                                // Check if task acceptance status exists and get it
+                                                                $task_acceptance_status = isset($task->task_acceptance_status) ? $task->task_acceptance_status : 'pending';
+                                                                ?>
+                                                                
+                                                                <?php if ($task->sorumlu_id == $current_user->ID && $task_acceptance_status === 'pending' && !$task->tamamlandi): ?>
+                                                                    <div class="bkm-task-acceptance-actions" style="margin-bottom: 10px;">
+                                                                        <button class="bkm-btn bkm-btn-primary bkm-btn-small" onclick="acceptTask(<?php echo $task->id; ?>)">
+                                                                            ✓ Kabul Et
+                                                                        </button>
+                                                                        <button class="bkm-btn bkm-btn-warning bkm-btn-small" onclick="showRejectForm(<?php echo $task->id; ?>)">
+                                                                            ✗ Reddet
+                                                                        </button>
+                                                                        
+                                                                        <!-- Reject Form (hidden by default) -->
+                                                                        <div id="reject-form-<?php echo $task->id; ?>" class="bkm-reject-form" style="display: none; margin-top: 10px;">
+                                                                            <div style="background: #fff3cd; padding: 10px; border-radius: 4px;">
+                                                                                <label for="rejection_reason_<?php echo $task->id; ?>">Reddetme Sebebi:</label>
+                                                                                <textarea id="rejection_reason_<?php echo $task->id; ?>" rows="3" placeholder="Lütfen bu görevi neden reddettiğinizi açıklayın..." required style="width: 100%; margin: 5px 0;"></textarea>
+                                                                                <div>
+                                                                                    <button class="bkm-btn bkm-btn-danger bkm-btn-small" onclick="rejectTask(<?php echo $task->id; ?>)">
+                                                                                        Görevi Reddet
+                                                                                    </button>
+                                                                                    <button class="bkm-btn bkm-btn-secondary bkm-btn-small" onclick="hideRejectForm(<?php echo $task->id; ?>)">
+                                                                                        İptal
+                                                                                    </button>
+                                                                                </div>
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                <?php elseif ($task->sorumlu_id == $current_user->ID && $task_acceptance_status === 'accepted'): ?>
+                                                                    <div class="bkm-task-status-info" style="margin-bottom: 10px;">
+                                                                        <span class="bkm-badge" style="background: #28a745; color: white;">✓ Görev Kabul Edildi</span>
+                                                                    </div>
+                                                                <?php elseif ($task->sorumlu_id == $current_user->ID && $task_acceptance_status === 'rejected'): ?>
+                                                                    <div class="bkm-task-status-info" style="margin-bottom: 10px;">
+                                                                        <span class="bkm-badge" style="background: #dc3545; color: white;">✗ Görev Reddedildi</span>
+                                                                        <?php if (isset($task->rejection_reason) && !empty($task->rejection_reason)): ?>
+                                                                            <div style="background: #f8d7da; padding: 8px; border-radius: 4px; margin-top: 5px; font-size: 0.9em;">
+                                                                                <strong>Reddetme Sebebi:</strong> <?php echo esc_html($task->rejection_reason); ?>
+                                                                            </div>
+                                                                        <?php endif; ?>
+                                                                    </div>
+                                                                <?php endif; ?>
+                                                                
+                                                                <?php if ($task->sorumlu_id == $current_user->ID && !$task->tamamlandi && $task_acceptance_status === 'accepted'): ?>
                                                                     <form method="post" style="display: inline;">
                                                                         <?php wp_nonce_field('bkm_frontend_action', 'bkm_frontend_nonce'); ?>
                                                                         <input type="hidden" name="task_action" value="complete_task" />
@@ -1674,6 +1701,16 @@ $performances = $wpdb->get_results("SELECT * FROM $performance_table ORDER BY na
                                                                             Notları Göster (<?php echo count($task_notes); ?>)
                                                                         </button>
                                                                     <?php endif; ?>
+                                                                    
+                                                                    <!-- Task Edit Button -->
+                                                                    <button class="bkm-btn bkm-btn-info bkm-btn-small" onclick="toggleTaskEditForm(<?php echo $task->id; ?>)">
+                                                                        ✏️ Düzenle
+                                                                    </button>
+                                                                    
+                                                                    <!-- Task History Button -->
+                                                                    <button class="bkm-btn bkm-btn-secondary bkm-btn-small" onclick="toggleTaskHistory(<?php echo $task->id; ?>)">
+                                                                        📋 Geçmiş
+                                                                    </button>
                                                                 <?php endif; ?>
                                                             </div>
                                                         </div>
@@ -1715,6 +1752,44 @@ $performances = $wpdb->get_results("SELECT * FROM $performance_table ORDER BY na
                                                                     <?php else: ?>
                                                                         <p style="text-align: center; color: #9e9e9e; font-style: italic; margin: 20px 0; padding: 30px; border: 2px dashed #e0e0e0; border-radius: 12px;">📝 Bu görev için henüz not bulunmamaktadır.</p>
                                                                     <?php endif; ?>
+                                                                </div>
+                                                            </div>
+                                                            
+                                                            <!-- Task Edit Form (hidden by default) -->
+                                                            <div id="task-edit-form-<?php echo $task->id; ?>" class="bkm-task-edit-form" style="display: none;">
+                                                                <h4>Görev Düzenle</h4>
+                                                                <form id="task-edit-form-element-<?php echo $task->id; ?>">
+                                                                    <div class="bkm-form-group">
+                                                                        <label for="edit_content_<?php echo $task->id; ?>">Görev İçeriği:</label>
+                                                                        <textarea id="edit_content_<?php echo $task->id; ?>" rows="3" required style="width: 100%;"><?php echo esc_textarea($task->content); ?></textarea>
+                                                                    </div>
+                                                                    
+                                                                    <div class="bkm-form-group">
+                                                                        <label for="edit_target_date_<?php echo $task->id; ?>">Hedef Tarih:</label>
+                                                                        <input type="date" id="edit_target_date_<?php echo $task->id; ?>" value="<?php echo esc_attr($task->hedef_bitis_tarihi); ?>" required style="width: 100%;" />
+                                                                    </div>
+                                                                    
+                                                                    <div class="bkm-form-group">
+                                                                        <label for="edit_reason_<?php echo $task->id; ?>">Düzenleme Sebebi <span class="required">*</span>:</label>
+                                                                        <textarea id="edit_reason_<?php echo $task->id; ?>" rows="2" placeholder="Bu düzenlemenin sebebini açıklayın..." required style="width: 100%;"></textarea>
+                                                                    </div>
+                                                                    
+                                                                    <div class="bkm-form-actions">
+                                                                        <button type="button" class="bkm-btn bkm-btn-primary bkm-btn-small" onclick="saveTaskEdit(<?php echo $task->id; ?>)">
+                                                                            Kaydet
+                                                                        </button>
+                                                                        <button type="button" class="bkm-btn bkm-btn-secondary bkm-btn-small" onclick="toggleTaskEditForm(<?php echo $task->id; ?>)">
+                                                                            İptal
+                                                                        </button>
+                                                                    </div>
+                                                                </form>
+                                                            </div>
+                                                            
+                                                            <!-- Task History Section (hidden by default) -->
+                                                            <div id="task-history-<?php echo $task->id; ?>" class="bkm-task-history" style="display: none;">
+                                                                <h4>Değişiklik Geçmişi</h4>
+                                                                <div id="task-history-content-<?php echo $task->id; ?>" class="bkm-history-content">
+                                                                    <p style="text-align: center; color: #666;">Geçmiş yükleniyor...</p>
                                                                 </div>
                                                             </div>
                                                         <?php endif; ?>
